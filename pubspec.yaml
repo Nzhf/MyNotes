@@ -1,0 +1,56 @@
+name: mynotes
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.10.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_slidable: ^4.0.3
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  uuid: ^4.5.2
+  intl: ^0.20.2
+
+  firebase_core: ^4.2.1
+  firebase_auth: ^6.1.2
+  google_sign_in: ^6.2.1
+  fluttertoast: ^8.2.4
+  cloud_firestore: ^6.1.0
+
+  # NEW: Add these for Quote API feature
+  flutter_riverpod: ^2.4.9  # State management
+  http: ^1.1.0              # HTTP requests for API
+  freezed_annotation: ^2.4.1 # For immutable data classes
+  json_annotation: ^4.8.1    # JSON serialization
+  flutter_local_notifications: ^19.5.0
+  timezone: ^0.10.1
+  flutter_timezone: ^5.0.1    # Required to get device timezone for scheduling
+
+  # NEW: AI Features
+  google_generative_ai: ^0.4.7  # Gemini API for summarization & tags (Latest supported version)
+  flutter_dotenv: ^5.1.0        # Secure API key storage
+  image_picker: ^1.2.1
+  record: ^6.1.2
+  audioplayers: ^6.5.1
+  path_provider: ^2.1.5
+  permission_handler: ^12.0.1
+  file_picker: ^10.3.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.6       # Code generation
+  freezed: ^2.4.5            # Generates immutable classes
+  json_serializable: ^6.7.1  # Generates JSON code
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.png
+    - assets/images/google.png
+    - .env  # API keys configuration file
