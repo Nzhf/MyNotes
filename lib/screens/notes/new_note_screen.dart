@@ -626,8 +626,22 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
       });
   }
 
+  bool _isDisposed = false;
+  ScaffoldMessengerState? _scaffoldMessenger;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Save a reference to the ScaffoldMessengerState before the widget is disposed
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
+  }
+
   @override
   void dispose() {
+    _isDisposed = true;
+    // Hide any active snackbars to prevent them from "following" us to other screens
+    _scaffoldMessenger?.hideCurrentSnackBar();
+
     _debounce?.cancel();
     titleController.removeListener(_onChanged);
     contentController.removeListener(_onChanged);

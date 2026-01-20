@@ -4,13 +4,14 @@ MyNotes is a powerful, AI-enhanced note-taking application built with Flutter. I
 
 ## ✨ Features
 
-- **AI-Powered Insights**: Automatically generate summaries for your notes and audio transcriptions using Groq and Cerebras AI integration.
-- **Smart Transcriptions**: Record audio notes and get accurate text transcriptions instantly.
+- **AI-Powered Insights**: Automatically generate summaries and labels for your notes, audio recordings, and **video attachments** using Groq and Cerebras AI.
+- **Transcriptions**: Convert voice notes and video audio into text instantly with high accuracy (powered by Groq Whisper).
+- **Video Support**: Attach videos to your notes, with built-in playback and intelligent AI summarization of the video content.
+- **Unified Media Picker**: A streamlined "Gallery" option to pick both photos and videos effortlessly.
 - **Cloud Sync**: Seamlessly sync notes across devices using Firebase Cloud Firestore.
 - **Offline First**: Work offline with full functionality; data syncs automatically when you're back online (powered by Hive).
-- **Beautiful UI**: Enjoy a soothing pastel color palette, smooth animations, and a clutter-free interface.
-- **Reminders**: Set smart reminders for your tasks and never miss a deadline.
-- **Secure**: Privacy-focused design with secure authentication and safe data storage.
+- **Smart Reminders**: Set time-based notifications for your notes so you never miss a task.
+- **Privacy Focused**: Secure authentication and local file encryption for your sensitive media.
 
 ## 🚀 Getting Started
 
@@ -51,7 +52,8 @@ MyNotes is a powerful, AI-enhanced note-taking application built with Flutter. I
 - **State Management**: Riverpod
 - **Local Database**: Hive
 - **Cloud Backend**: Firebase (Auth, Firestore)
-- **AI Integration**: Groq API, Cerebras API
+- **AI Integration**: Groq API (Whisper), Cerebras API (Summarization)
+- **Multimedia**: FFmpeg (New Audio Kit) for video processing
 
 ## 📸 Screenshots
 

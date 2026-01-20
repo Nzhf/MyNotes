@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:video_player/video_player.dart';
 
 class NoteDetailScreen extends StatefulWidget {
   final String title;
@@ -10,7 +11,10 @@ class NoteDetailScreen extends StatefulWidget {
   final String? audioPath;
   final String? aiSummary;
   final String? transcription;
+  final String? videoPath;
   final String? audioSummary;
+  final String? videoTranscription;
+  final String? videoSummary;
 
   const NoteDetailScreen({
     super.key,
@@ -22,6 +26,9 @@ class NoteDetailScreen extends StatefulWidget {
     this.aiSummary,
     this.transcription,
     this.audioSummary,
+    this.videoPath,
+    this.videoTranscription,
+    this.videoSummary,
   });
 
   @override
@@ -30,6 +37,7 @@ class NoteDetailScreen extends StatefulWidget {
 
 class _NoteDetailScreenState extends State<NoteDetailScreen> {
   late AudioPlayer _audioPlayer;
+  VideoPlayerController? _videoController;
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
@@ -38,6 +46,14 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   void initState() {
     super.initState();
     _audioPlayer = AudioPlayer();
+
+    // Initialize video if available
+    if (widget.videoPath != null) {
+      _videoController = VideoPlayerController.file(File(widget.videoPath!))
+        ..initialize().then((_) {
+          if (mounted) setState(() {});
+        });
+    }
 
     _audioPlayer.onDurationChanged.listen((d) {
       if (mounted) setState(() => _duration = d);
@@ -53,6 +69,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   @override
   void dispose() {
     _audioPlayer.dispose();
+    _videoController?.dispose();
     super.dispose();
   }
 
@@ -145,125 +162,193 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                 ),
               ),
 
+            // --- Video Attachment Section ---
+            if (widget.videoPath != null &&
+                _videoController != null &&
+                _videoController!.value.isInitialized)
+              Container(
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 15,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(16),
+                      ),
+                      child: AspectRatio(
+                        aspectRatio: _videoController!.value.aspectRatio,
+                        child: VideoPlayer(_videoController!),
+                      ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.4),
+                        borderRadius: const BorderRadius.vertical(
+                          bottom: Radius.circular(16),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              _videoController!.value.isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.black87,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _videoController!.value.isPlaying
+                                    ? _videoController!.pause()
+                                    : _videoController!.play();
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // --- Text Content Section ---
             Text(
               widget.title,
               style: TextStyle(
-                fontSize: 28,
+                fontSize: 32,
                 fontWeight: FontWeight.bold,
+                letterSpacing: -1,
                 color: textColor,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
             Text(
               widget.content,
-              style: TextStyle(fontSize: 18, color: textColor),
+              style: TextStyle(
+                fontSize: 18,
+                color: textColor.withOpacity(0.8),
+                height: 1.5,
+              ),
             ),
 
-            if (widget.aiSummary != null || widget.transcription != null) ...[
-              const SizedBox(height: 32),
-              const Divider(),
-              const SizedBox(height: 16),
+            // --- AI & Analysis Sections ---
+            if (widget.aiSummary != null ||
+                widget.transcription != null ||
+                widget.videoSummary != null ||
+                widget.videoTranscription != null) ...[
+              const SizedBox(height: 40),
+              Divider(color: textColor.withOpacity(0.1)),
+              const SizedBox(height: 20),
 
-              if (widget.aiSummary != null) ...[
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.auto_awesome,
-                      size: 20,
-                      color: Colors.indigo,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'AI Summary',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                      ),
-                    ),
-                  ],
+              // Note Summary
+              if (widget.aiSummary != null)
+                _buildAnalysisSection(
+                  title: 'AI Summary',
+                  content: widget.aiSummary!,
+                  icon: Icons.auto_awesome_rounded,
+                  iconColor: Colors.indigo,
+                  textColor: textColor,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    widget.aiSummary!,
-                    style: TextStyle(fontSize: 16, color: textColor),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
 
-              if (widget.audioSummary != null) ...[
-                Row(
-                  children: [
-                    const Icon(Icons.summarize, size: 20, color: Colors.teal),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Audio Summary',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                      ),
-                    ),
-                  ],
+              // Audio Summary
+              if (widget.audioSummary != null)
+                _buildAnalysisSection(
+                  title: 'Audio Summary',
+                  content: widget.audioSummary!,
+                  icon: Icons.summarize_rounded,
+                  iconColor: Colors.teal,
+                  textColor: textColor,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    widget.audioSummary!,
-                    style: TextStyle(fontSize: 16, color: textColor),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
 
-              if (widget.transcription != null) ...[
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.text_fields,
-                      size: 20,
-                      color: Colors.green,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Transcription',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                      ),
-                    ),
-                  ],
+              // Video Summary
+              if (widget.videoSummary != null)
+                _buildAnalysisSection(
+                  title: 'Video Summary',
+                  content: widget.videoSummary!,
+                  icon: Icons.video_stable_rounded,
+                  iconColor: Colors.deepPurple,
+                  textColor: textColor,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    widget.transcription!,
-                    style: TextStyle(fontSize: 16, color: textColor),
-                  ),
+
+              // Audio Transcription
+              if (widget.transcription != null)
+                _buildAnalysisSection(
+                  title: 'Audio Transcription',
+                  content: widget.transcription!,
+                  icon: Icons.text_fields_rounded,
+                  iconColor: Colors.green,
+                  textColor: textColor,
                 ),
-              ],
+
+              // Video Transcription
+              if (widget.videoTranscription != null)
+                _buildAnalysisSection(
+                  title: 'Video Transcription',
+                  content: widget.videoTranscription!,
+                  icon: Icons.subtitles_rounded,
+                  iconColor: Colors.orange,
+                  textColor: textColor,
+                ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAnalysisSection({
+    required String title,
+    required String content,
+    required IconData icon,
+    required Color iconColor,
+    required Color textColor,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 20, color: iconColor),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.25),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: Text(
+            content,
+            style: TextStyle(
+              fontSize: 16,
+              color: textColor.withOpacity(0.9),
+              height: 1.4,
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
     );
   }
 }

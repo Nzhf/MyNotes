@@ -22,6 +22,7 @@ class _NotesScreenState extends State<NotesScreen>
   List<Note> _notes = [];
   String _searchQuery = '';
   bool _searching = false;
+  ScaffoldMessengerState? _scaffoldMessenger;
 
   // Expanded pastel palette with more color options
   final List<int> _palette = [
@@ -55,6 +56,7 @@ class _NotesScreenState extends State<NotesScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
     _reloadNotes();
   }
 
@@ -146,22 +148,23 @@ class _NotesScreenState extends State<NotesScreen>
     }).toList();
   }
 
-  void _showUndoSnack(BuildContext context) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(
-        content: const Text('Note deleted'),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () async {
-            await NoteRepository.undoDelete();
-            await _reloadNotes();
-          },
+  void _showUndoSnack() {
+    if (_scaffoldMessenger != null) {
+      _scaffoldMessenger!.clearSnackBars();
+      _scaffoldMessenger!.showSnackBar(
+        SnackBar(
+          content: const Text('Note deleted'),
+          action: SnackBarAction(
+            label: 'UNDO',
+            onPressed: () async {
+              await NoteRepository.undoDelete();
+              await _reloadNotes();
+            },
+          ),
+          duration: const Duration(seconds: 4),
         ),
-        duration: const Duration(seconds: 4),
-      ),
-    );
+      );
+    }
   }
 
   void _showQuickActions(Note note) {
@@ -199,10 +202,13 @@ class _NotesScreenState extends State<NotesScreen>
                     await Clipboard.setData(
                       ClipboardData(text: '${note.title}\n\n${note.content}'),
                     );
+                    if (!mounted) return;
                     Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Copied to clipboard')),
-                    );
+                    if (_scaffoldMessenger != null) {
+                      _scaffoldMessenger!.showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    }
                   },
                 ),
               ],
@@ -225,6 +231,7 @@ class _NotesScreenState extends State<NotesScreen>
               return GestureDetector(
                 onTap: () async {
                   await NoteRepository.changeColor(note.id, v);
+                  if (!mounted) return;
                   Navigator.pop(ctx);
                   await _reloadNotes();
                 },
@@ -234,7 +241,9 @@ class _NotesScreenState extends State<NotesScreen>
                   decoration: BoxDecoration(
                     color: Color(v),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.black.withOpacity(0.06)),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.06),
+                    ),
                   ),
                 ),
               );
@@ -306,13 +315,13 @@ class _NotesScreenState extends State<NotesScreen>
       firstDate: now,
       lastDate: DateTime(now.year + 5),
     );
-    if (date == null) return;
+    if (date == null || !mounted) return;
 
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1))),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
 
     final dateTime = DateTime(
       date.year,
@@ -323,8 +332,8 @@ class _NotesScreenState extends State<NotesScreen>
     );
 
     if (dateTime.isBefore(DateTime.now())) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      if (_scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(
           const SnackBar(content: Text('Cannot set reminder in the past')),
         );
       }
@@ -362,7 +371,7 @@ class _NotesScreenState extends State<NotesScreen>
     );
     await NoteRepository.deleteNote(id);
     await _reloadNotes();
-    _showUndoSnack(context);
+    _showUndoSnack();
   }
 
   Widget _buildGridNoteCard(Note note) {
@@ -417,7 +426,10 @@ class _NotesScreenState extends State<NotesScreen>
             color: Color(note.colorValue),
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 8,
+              ),
             ],
           ),
           child: Column(
@@ -553,7 +565,10 @@ class _NotesScreenState extends State<NotesScreen>
               color: Color(note.colorValue),
               borderRadius: BorderRadius.circular(14),
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 8,
+                ),
               ],
             ),
             child: Column(
@@ -643,8 +658,8 @@ class _NotesScreenState extends State<NotesScreen>
         height: 36,
         decoration: BoxDecoration(
           color: isDarkMode
-              ? Colors.white.withOpacity(0.1)
-              : Colors.white.withOpacity(0.5),
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.white.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Material(
