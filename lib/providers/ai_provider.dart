@@ -150,8 +150,9 @@ class SummarizationNotifier extends StateNotifier<SummarizationState> {
       final existingNote = NoteRepository.getNoteById(realNoteId);
       if (existingNote != null) {
         // 3. We update the database directly with the new summary.
-        // If 'isAudioSummary' is true, we update the 'audioSummary' field.
-        // Otherwise, we update the main 'aiSummary' field.
+        // We check if this is a main summary, audio summary, or video summary!
+        final isVideoSummary = noteId.endsWith('_video_summary');
+
         await NoteRepository.updateNote(
           realNoteId,
           existingNote.title,
@@ -160,9 +161,15 @@ class SummarizationNotifier extends StateNotifier<SummarizationState> {
           reminder: existingNote.reminder,
           imagePath: existingNote.imagePath,
           audioPath: existingNote.audioPath,
-          aiSummary: isAudioSummary ? existingNote.aiSummary : summary,
+          aiSummary: (!isAudioSummary && !isVideoSummary)
+              ? summary
+              : existingNote.aiSummary,
           transcription: existingNote.transcription,
           audioSummary: isAudioSummary ? summary : existingNote.audioSummary,
+          // NEW: Video fields
+          videoPath: existingNote.videoPath,
+          videoTranscription: existingNote.videoTranscription,
+          videoSummary: isVideoSummary ? summary : existingNote.videoSummary,
         );
       }
       // ------------------------------------
@@ -474,13 +481,14 @@ class TranscriptionNotifier extends StateNotifier<TranscriptionState> {
       state = TranscriptionSuccess(text, noteId: noteId);
 
       // --- BACKGROUND PERSISTENCE LOGIC ---
-      // If a noteId was passed, we save the transcription results to the database
-      // right now, so it's not lost if the user leaves the screen.
       if (noteId != null) {
-        final existingNote = NoteRepository.getNoteById(noteId);
+        final isVideo = noteId.endsWith('_video');
+        final realNoteId = isVideo ? noteId.split('_').first : noteId;
+
+        final existingNote = NoteRepository.getNoteById(realNoteId);
         if (existingNote != null) {
           await NoteRepository.updateNote(
-            noteId,
+            realNoteId,
             existingNote.title,
             existingNote.content,
             colorValue: existingNote.colorValue,
@@ -488,8 +496,14 @@ class TranscriptionNotifier extends StateNotifier<TranscriptionState> {
             imagePath: existingNote.imagePath,
             audioPath: existingNote.audioPath,
             aiSummary: existingNote.aiSummary,
-            transcription: text,
+            transcription: isVideo ? existingNote.transcription : text,
             audioSummary: existingNote.audioSummary,
+            // NEW: Video fields
+            videoPath: existingNote.videoPath,
+            videoTranscription: isVideo
+                ? text
+                : existingNote.videoTranscription,
+            videoSummary: existingNote.videoSummary,
           );
         }
       }
@@ -524,6 +538,28 @@ final transcriptionProvider =
 /// existing at the same time without their loading states or results
 /// conflicting in the UI.
 final audioSummarizationProvider =
+    StateNotifierProvider<SummarizationNotifier, SummarizationState>((ref) {
+      final aiService = ref.watch(aiServiceProvider);
+      return SummarizationNotifier(aiService);
+    });
+
+// =============================================================================
+// VIDEO AI PROVIDERS
+// =============================================================================
+// These providers handle AI features specifically for VIDEO attachments.
+// They are separate from audio providers to prevent state conflicts.
+
+/// Provider for video transcription state management.
+/// Uses the same TranscriptionNotifier but maintains separate state for video.
+final videoTranscriptionProvider =
+    StateNotifierProvider<TranscriptionNotifier, TranscriptionState>((ref) {
+      final aiService = ref.watch(aiServiceProvider);
+      return TranscriptionNotifier(aiService);
+    });
+
+/// Provider for video summarization state management.
+/// Uses the same SummarizationNotifier but maintains separate state for video.
+final videoSummarizationProvider =
     StateNotifierProvider<SummarizationNotifier, SummarizationState>((ref) {
       final aiService = ref.watch(aiServiceProvider);
       return SummarizationNotifier(aiService);

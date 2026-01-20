@@ -20,6 +20,13 @@ class Note {
   String? transcription; // PERSISTENT AI transcription of the audio
   String? audioSummary; // PERSISTENT AI summary of the audio transcription
 
+  // =========================================================================
+  // VIDEO ATTACHMENT FIELDS
+  // =========================================================================
+  String? videoPath; // Local path to attached video file
+  String? videoTranscription; // PERSISTENT AI transcription of the video audio
+  String? videoSummary; // PERSISTENT AI summary of the video transcription
+
   Note({
     required this.id,
     required this.title,
@@ -34,6 +41,9 @@ class Note {
     this.aiSummary,
     this.transcription,
     this.audioSummary,
+    this.videoPath,
+    this.videoTranscription,
+    this.videoSummary,
   });
 
   Color get color => Color(colorValue);
@@ -52,6 +62,9 @@ class Note {
     'aiSummary': aiSummary,
     'transcription': transcription,
     'audioSummary': audioSummary,
+    'videoPath': videoPath,
+    'videoTranscription': videoTranscription,
+    'videoSummary': videoSummary,
   };
 
   factory Note.fromMap(Map m) {
@@ -71,6 +84,9 @@ class Note {
       aiSummary: m['aiSummary'] as String?,
       transcription: m['transcription'] as String?,
       audioSummary: m['audioSummary'] as String?,
+      videoPath: m['videoPath'] as String?,
+      videoTranscription: m['videoTranscription'] as String?,
+      videoSummary: m['videoSummary'] as String?,
     );
   }
 
@@ -88,6 +104,9 @@ class Note {
     String? aiSummary,
     String? transcription,
     String? audioSummary,
+    String? videoPath,
+    String? videoTranscription,
+    String? videoSummary,
   }) {
     return Note(
       id: id ?? this.id,
@@ -103,6 +122,9 @@ class Note {
       aiSummary: aiSummary ?? this.aiSummary,
       transcription: transcription ?? this.transcription,
       audioSummary: audioSummary ?? this.audioSummary,
+      videoPath: videoPath ?? this.videoPath,
+      videoTranscription: videoTranscription ?? this.videoTranscription,
+      videoSummary: videoSummary ?? this.videoSummary,
     );
   }
 }

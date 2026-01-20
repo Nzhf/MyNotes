@@ -31,6 +31,16 @@ class AIService {
   // Model: The specific Chef we want (Llama 3.1 8B is lightning fast)
   static const String _model = 'llama3.1-8b';
 
+  // ===========================================================================
+  // FILE SIZE LIMITS (SAFETY GUARDS)
+  // ===========================================================================
+  // Groq Whisper has a hard limit of 25MB for audio files.
+  static const int maxAudioSizeBytes = 25 * 1024 * 1024; // 25 MB
+
+  // We set a 500MB limit for video files to prevent the app from freezing
+  // or running out of memory during the audio extraction process.
+  static const int maxVideoSizeBytes = 500 * 1024 * 1024; // 500 MB
+
   /// **Step 1: Get the Keys**
   /// We need to show our Cerebras ID (API Key) to use their service.
   /// This method loads it from your hidden .env file.

@@ -7,11 +7,14 @@ import '../../data/note_repository.dart';
 import '../../services/notification_service.dart';
 import '../../providers/ai_provider.dart';
 import '../../utils/grammar_controller.dart';
-
 import 'package:mynotes/services/media_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 import 'dart:io';
+import '../../services/video_processor_service.dart';
+import '../../services/ai_service.dart';
+import 'package:path/path.dart' as p;
 
 /// =============================================================================
 /// NEW NOTE SCREEN - With AI Features
@@ -70,6 +73,18 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
   // We keep it hidden during "One-Tap" summaries to keep the UI clean.
   bool _showTranscriptionUI = false;
 
+  // =========================================================================
+  // VIDEO STATE VARIABLES
+  // =========================================================================
+  String? _videoPath;
+  String? _videoTranscription;
+  String? _videoSummary;
+  bool _showVideoSummary = false;
+  bool _showVideoTranscriptionUI = false;
+  bool _isExtractingAudio = false; // Loading state for FFmpeg extraction
+  VideoPlayerController? _videoController;
+  final VideoProcessorService _videoProcessor = VideoProcessorService();
+
   final MediaService _mediaService = MediaService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isRecording = false;
@@ -121,6 +136,16 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
     _transcription = existing?.transcription;
     _audioSummary = existing?.audioSummary;
 
+    // --- VIDEO DATA ---
+    _videoPath = existing?.videoPath;
+    _videoTranscription = existing?.videoTranscription;
+    _videoSummary = existing?.videoSummary;
+
+    // Initialize Video Player if we have a path
+    if (_videoPath != null) {
+      _initVideoPlayer(_videoPath!);
+    }
+
     // --- INITIALIZE VISIBILITY ---
     // If we already have a summary saved in the database,
     // we make sure the summary panel is visible right when you open the note!
@@ -130,6 +155,8 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
     // This toggle controls if the "Transcription Box" is visible.
     // We only show it if a transcription already exists or if the user taps "Transcribe".
     _showTranscriptionUI = _transcription != null;
+    _showVideoTranscriptionUI = _videoTranscription != null;
+    _showVideoSummary = _videoSummary != null;
 
     // Listen to audio player states
     _audioPlayer.onDurationChanged.listen((d) {
@@ -148,6 +175,8 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
         ref.read(transcriptionProvider.notifier).reset();
         ref.read(summarizationProvider.notifier).reset();
         ref.read(audioSummarizationProvider.notifier).reset();
+        ref.read(videoTranscriptionProvider.notifier).reset();
+        ref.read(videoSummarizationProvider.notifier).reset();
         ref.read(tagSuggestionProvider.notifier).reset();
       } else {
         // Existing note: Load saved results into the "AI Brains"
@@ -173,6 +202,23 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
               .setLoadedResult(_audioSummary!, "${noteId}_audio");
         } else {
           ref.read(audioSummarizationProvider.notifier).reset();
+        }
+
+        // --- VIDEO RE-HYDRATION ---
+        if (_videoTranscription != null) {
+          ref
+              .read(videoTranscriptionProvider.notifier)
+              .setLoadedResult(_videoTranscription!, "${noteId}_video");
+        } else {
+          ref.read(videoTranscriptionProvider.notifier).reset();
+        }
+
+        if (_videoSummary != null) {
+          ref
+              .read(videoSummarizationProvider.notifier)
+              .setLoadedResult(_videoSummary!, "${noteId}_video_summary");
+        } else {
+          ref.read(videoSummarizationProvider.notifier).reset();
         }
 
         ref.read(tagSuggestionProvider.notifier).reset();
@@ -288,6 +334,9 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
         aiSummary: _aiSummary,
         transcription: _transcription,
         audioSummary: _audioSummary,
+        videoPath: _videoPath,
+        videoTranscription: _videoTranscription,
+        videoSummary: _videoSummary,
       );
       _manageNotification(_noteId!, title, content);
       return;
@@ -305,11 +354,15 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
       createdAt: now,
       updatedAt: now,
       isPinned: false,
+      reminder: _reminderTime,
       imagePath: _imagePath,
       audioPath: _audioPath,
       aiSummary: _aiSummary,
       transcription: _transcription,
       audioSummary: _audioSummary,
+      videoPath: _videoPath,
+      videoTranscription: _videoTranscription,
+      videoSummary: _videoSummary,
     );
 
     await NoteRepository.addNote(note: note);
@@ -329,8 +382,24 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
   Future<void> _pickImage(ImageSource source) async {
     final path = await _mediaService.pickImage(source);
     if (path != null) {
-      setState(() => _imagePath = path);
-      _autoSave();
+      _handleImageSelected(path);
+    }
+  }
+
+  void _handleImageSelected(String path) {
+    setState(() => _imagePath = path);
+    _autoSave();
+  }
+
+  Future<void> _handleGalleryPick() async {
+    final path = await _mediaService.pickMedia();
+    if (path != null) {
+      final ext = p.extension(path).toLowerCase();
+      if (ext == '.mp4' || ext == '.mov' || ext == '.avi') {
+        await _handleVideoSelected(path);
+      } else {
+        _handleImageSelected(path);
+      }
     }
   }
 
@@ -368,6 +437,7 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
   }
 
   void _showTranscriptionOffer() {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Audio added! Would you like to transcribe it?'),
@@ -391,6 +461,132 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
         .transcribe(_audioPath!, noteId: _noteId);
   }
 
+  // ===========================================================================
+  // VIDEO HANDLING LOGIC
+  // ===========================================================================
+
+  Future<void> _handleVideoSelected(String path) async {
+    // Check file size
+    final file = File(path);
+    final size = await file.length();
+    if (size > AIService.maxVideoSizeBytes) {
+      if (mounted) {
+        _showLimitError(
+          'Video Too Large',
+          'This video is over 500MB. To keep the app fast and stable, please choose a smaller video.',
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _videoPath = path;
+    });
+
+    // Initialize the player
+    _initVideoPlayer(path);
+
+    // Autosave so we don't lose the attachment
+    _autoSave();
+
+    // Offer to transcribe
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Video added! Would you like to transcribe it?'),
+          action: SnackBarAction(
+            label: 'TRANSCRIBE',
+            onPressed: _transcribeVideo,
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  /// **Step 2: Extract audio and transcribe video**
+  Future<void> _transcribeVideo() async {
+    if (_videoPath == null) return;
+
+    // Optimization: If we already have a transcription result, don't re-extract/re-transcribe
+    if (_videoTranscription != null) {
+      setState(() => _showVideoTranscriptionUI = true);
+      return;
+    }
+
+    setState(() {
+      _isExtractingAudio = true;
+      _showVideoTranscriptionUI = true;
+    });
+
+    try {
+      // 1. Extract audio from video using FFmpeg
+      final extractedAudioPath = await _videoProcessor.extractAudio(
+        _videoPath!,
+      );
+
+      // Check extracted audio file size (Groq Whisper limit is 25MB)
+      final audioFile = File(extractedAudioPath);
+      final audioSize = await audioFile.length();
+      if (audioSize > AIService.maxAudioSizeBytes) {
+        // Cleanup temp file
+        await _videoProcessor.deleteExtractedAudio(extractedAudioPath);
+        if (mounted) {
+          _showLimitError(
+            'Audio Too Large',
+            'The extracted audio is larger than 25MB. AI processing currently supports up to 25MB per file.',
+          );
+        }
+        return;
+      }
+
+      // 2. Send to AI for transcription
+      // We pass noteId_video so the provider knows it's for the video field
+      await ref
+          .read(videoTranscriptionProvider.notifier)
+          .transcribe(extractedAudioPath, noteId: "${_noteId}_video");
+
+      // 3. Cleanup temp audio file
+      await _videoProcessor.deleteExtractedAudio(extractedAudioPath);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Transcription failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isExtractingAudio = false);
+    }
+  }
+
+  /// **Step 3: Direct Summarization (One-Tap)**
+  Future<void> _summarizeVideo() async {
+    if (_videoPath == null) return;
+
+    // Show the video summary panel
+    setState(() => _showVideoSummary = true);
+
+    // If we don't have a transcription yet, we MUST transcribe first
+    if (_videoTranscription == null) {
+      await _transcribeVideo();
+    }
+
+    // Now generate the summary using the transcription
+    final currentTranscription = _videoTranscription;
+    if (currentTranscription != null && _noteId != null) {
+      ref
+          .read(videoSummarizationProvider.notifier)
+          .summarize(
+            title: "Video Attachment", // Specific title to isolate context
+            content: currentTranscription,
+            noteId: "${_noteId}_video_summary",
+          );
+    }
+  }
+
   void _removeImage() {
     setState(() => _imagePath = null);
     _autoSave();
@@ -400,9 +596,34 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
     _audioPlayer.stop();
     setState(() {
       _audioPath = null;
+      _transcription = null;
+      _audioSummary = null;
+      _showTranscriptionUI = false;
+      _showAudioSummary = false;
       _isPlaying = false;
     });
+
+    // Reset AI providers for audio
+    ref.read(transcriptionProvider.notifier).reset();
+    ref.read(audioSummarizationProvider.notifier).reset();
+
     _autoSave();
+  }
+
+  // ===========================================================================
+  // VIDEO PLAYER LIFECYCLE
+  // ===========================================================================
+  /// Initializes the video player with the given file path.
+  void _initVideoPlayer(String path) {
+    if (_videoController != null) {
+      _videoController!.dispose();
+    }
+
+    _videoController = VideoPlayerController.file(File(path))
+      ..initialize().then((_) {
+        // Ensure the first frame is shown after the video is initialized.
+        if (mounted) setState(() {});
+      });
   }
 
   @override
@@ -413,6 +634,7 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
     titleController.dispose();
     contentController.dispose();
     _audioPlayer.dispose();
+    _videoController?.dispose(); // Clean up the video memory
     _mediaService.dispose();
     super.dispose();
   }
@@ -435,6 +657,9 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
         aiSummary: _aiSummary,
         transcription: _transcription,
         audioSummary: _audioSummary,
+        videoPath: _videoPath,
+        videoTranscription: _videoTranscription,
+        videoSummary: _videoSummary,
       );
       _manageNotification(_noteId!, title, content);
       if (!mounted) return;
@@ -466,6 +691,9 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
       aiSummary: _aiSummary,
       transcription: _transcription,
       audioSummary: _audioSummary,
+      videoPath: _videoPath,
+      videoTranscription: _videoTranscription,
+      videoSummary: _videoSummary,
     );
 
     await NoteRepository.addNote(note: note);
@@ -608,6 +836,40 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
     // - Explicit removal is handled in _handleReminderClick (line 225)
   }
 
+  // ===========================================================================
+  // ERROR DIALOG HELPERS
+  // ===========================================================================
+
+  /// Shows a clean, modern dialog explaining why a file was rejected due to size.
+  void _showLimitError(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            const SizedBox(width: 8),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                color: Colors.purple,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // --- SAFE AI LISTENERS ---
@@ -650,6 +912,40 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
       }
     });
 
+    // 4. Listen for Video Transcription Results
+    ref.listen(videoTranscriptionProvider, (previous, next) {
+      if (next is TranscriptionSuccess) {
+        // --- ID CHECK ---
+        // Only accept the result if it matches our unique video ID pattern: "noteId_video"
+        if (next.noteId == "${_noteId}_video") {
+          if (mounted) {
+            setState(() {
+              _videoTranscription = next.text;
+              _showVideoTranscriptionUI = true;
+            });
+          }
+        }
+      } else if (next is TranscriptionError || next is TranscriptionSuccess) {
+        // Reset loading flag if it finishes or fails
+        if (mounted) setState(() => _isExtractingAudio = false);
+      }
+    });
+
+    // 5. Listen for Video Content Summary
+    ref.listen(videoSummarizationProvider, (previous, next) {
+      if (next is SummarizationSuccess) {
+        // Only accept the result if it matches our unique video summary ID pattern: "noteId_video_summary"
+        if (next.noteId == "${_noteId}_video_summary") {
+          if (mounted) {
+            setState(() {
+              _videoSummary = next.summary;
+              _showVideoSummary = true; // Auto-show when summary arrives
+            });
+          }
+        }
+      }
+    });
+
     // Listen for grammar check results and update the controller
     ref.listen(grammarCheckProvider, (previous, next) {
       next.whenOrNull(
@@ -675,7 +971,7 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
             tooltip: 'Add Media',
             onSelected: (value) {
               if (value == 'camera') _pickImage(ImageSource.camera);
-              if (value == 'gallery') _pickImage(ImageSource.gallery);
+              if (value == 'gallery') _handleGalleryPick();
               if (value == 'record') _recordVoice();
               if (value == 'file') _pickAudioFile();
             },
@@ -791,6 +1087,10 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
                   // Shows transcription result
                   _buildTranscriptionSection(isDarkMode),
 
+                  // ============= VIDEO TRANSCRIPTION SECTION =============
+                  if (_showVideoTranscriptionUI)
+                    _buildVideoTranscriptionSection(isDarkMode),
+
                   // ============= AI SUMMARY SECTION =============
                   // Shows a short summary of YOUR note content
                   if (_showSummary) _buildSummarySection(isDarkMode),
@@ -799,6 +1099,9 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
                   // Shows a short summary of what was SAID in the audio
                   // This is the ONLY place this appears (the duplicate below has been removed!)
                   if (_showAudioSummary) _buildAudioSummarySection(isDarkMode),
+
+                  // ============= VIDEO SUMMARY SECTION =============
+                  if (_showVideoSummary) _buildVideoSummarySection(isDarkMode),
 
                   TextField(
                     controller: contentController,
@@ -1118,12 +1421,386 @@ class _NewNoteScreenState extends ConsumerState<NewNoteScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_imagePath != null) _buildImagePreview(isDarkMode),
+        if (_videoPath != null) _buildVideoPlayer(isDarkMode),
         if (_audioPath != null) _buildAudioPlayer(isDarkMode),
         if (_isRecording) _buildRecordingIndicator(isDarkMode),
-        // --- DUPLICATE REMOVED ---
-        // I removed the audio summary call that was here previously.
-        // This stops it from appearing twice on your screen!
       ],
+    );
+  }
+
+  // ===========================================================================
+  // VIDEO PLAYER WIDGET
+  // ===========================================================================
+  /// Builds a full in-note video player with controls.
+  Widget _buildVideoPlayer(bool isDarkMode) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          // The Video Itself
+          if (_videoController != null && _videoController!.value.isInitialized)
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(12),
+              ),
+              child: AspectRatio(
+                aspectRatio: _videoController!.value.aspectRatio,
+                child: Stack(
+                  alignment: Alignment.bottomCenter,
+                  children: [
+                    VideoPlayer(_videoController!),
+                    // Play/Pause Overlay Button
+                    Center(
+                      child: IconButton(
+                        icon: Icon(
+                          _videoController!.value.isPlaying
+                              ? Icons.pause
+                              : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _videoController!.value.isPlaying
+                                ? _videoController!.pause()
+                                : _videoController!.play();
+                          });
+                        },
+                      ),
+                    ),
+                    // Progress Bar
+                    VideoProgressIndicator(
+                      _videoController!,
+                      allowScrubbing: true,
+                      padding: const EdgeInsets.only(top: 2),
+                      colors: VideoProgressColors(
+                        playedColor: Colors.purple,
+                        bufferedColor: Colors.grey[700]!,
+                        backgroundColor: Colors.grey[900]!,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            const SizedBox(
+              height: 200,
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.purple),
+              ),
+            ),
+
+          // Bottom Bar with Actions
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDarkMode ? Colors.grey[900] : Colors.grey[100],
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.video_file, size: 20, color: Colors.purple[400]),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Video Attached',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isDarkMode ? Colors.grey[300] : Colors.grey[700],
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    // AI Transcribe for Video
+                    IconButton(
+                      icon: const Icon(
+                        Icons.description_outlined,
+                        size: 20,
+                        color: Colors.purple,
+                      ),
+                      tooltip: 'Transcribe Video',
+                      onPressed: _transcribeVideo,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 12),
+                    // AI Summarize for Video
+                    IconButton(
+                      icon: const Icon(
+                        Icons.auto_awesome,
+                        size: 20,
+                        color: Colors.purple,
+                      ),
+                      tooltip: 'Video Summary',
+                      onPressed: _summarizeVideo,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 12),
+                    // Remove Video
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        size: 20,
+                        color: Colors.red,
+                      ),
+                      onPressed: _removeVideo,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeVideo() {
+    setState(() {
+      _videoPath = null;
+      _videoTranscription = null;
+      _videoSummary = null;
+      _showVideoTranscriptionUI = false;
+      _showVideoSummary = false;
+      _videoController?.dispose();
+      _videoController = null;
+    });
+
+    // Reset AI providers for video so they don't show old data if we add a new video
+    ref.read(videoTranscriptionProvider.notifier).reset();
+    ref.read(videoSummarizationProvider.notifier).reset();
+
+    _autoSave();
+  }
+
+  // ===========================================================================
+  // VIDEO AI UI BUILDERS
+  // ===========================================================================
+
+  /// Builds the Video Transcription section.
+  Widget _buildVideoTranscriptionSection(bool isDarkMode) {
+    if (!_showVideoTranscriptionUI) return const SizedBox.shrink();
+
+    final state = ref.watch(videoTranscriptionProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Extraction Overlay (Loading)
+        if (_isExtractingAudio)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.purple,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Extracting audio from video...',
+                  style: TextStyle(
+                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        state.when(
+          initial: () => const SizedBox.shrink(),
+          loading: () => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.purple,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Transcribing video...',
+                  style: TextStyle(
+                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          success: (text, noteIdInState) {
+            // --- ID CHECK ---
+            if (noteIdInState != "${_noteId}_video")
+              return const SizedBox.shrink();
+
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isDarkMode
+                    ? Colors.purple.withValues(alpha: 0.1)
+                    : Colors.purple[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.purple.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '📝 Video Transcription',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: isDarkMode
+                              ? Colors.purple[300]
+                              : Colors.purple[800],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: () =>
+                            setState(() => _showVideoTranscriptionUI = false),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.4,
+                      color: isDarkMode ? Colors.grey[300] : Colors.grey[800],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          error: (message) => Text(
+            'Error: $message',
+            style: const TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Builds the Video Summary section.
+  Widget _buildVideoSummarySection(bool isDarkMode) {
+    if (!_showVideoSummary) return const SizedBox.shrink();
+
+    final state = ref.watch(videoSummarizationProvider);
+
+    return state.when(
+      initial: () => const SizedBox.shrink(),
+      loading: () => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.purple,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Summarizing video content...',
+              style: TextStyle(
+                color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      ),
+      success: (summary, noteIdInState) {
+        // --- ID CHECK ---
+        if (noteIdInState != "${_noteId}_video_summary")
+          return const SizedBox.shrink();
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: isDarkMode
+                ? Colors.purple.withValues(alpha: 0.2)
+                : Colors.purple[100],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '✨ Video AI Summary',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: isDarkMode
+                          ? Colors.purple[300]
+                          : Colors.purple[900],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () => setState(() => _showVideoSummary = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                summary,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: isDarkMode ? Colors.grey[200] : Colors.grey[900],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      error: (message) =>
+          Text('Error: $message', style: const TextStyle(color: Colors.red)),
     );
   }
 

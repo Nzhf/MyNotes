@@ -107,6 +107,10 @@ class NoteRepository {
     String? aiSummary,
     String? transcription,
     String? audioSummary,
+    // NEW: Video fields
+    String? videoPath,
+    String? videoTranscription,
+    String? videoSummary,
   }) async {
     await init();
 
@@ -124,6 +128,9 @@ class NoteRepository {
       aiSummary: aiSummary,
       transcription: transcription,
       audioSummary: audioSummary,
+      videoPath: videoPath,
+      videoTranscription: videoTranscription,
+      videoSummary: videoSummary,
     );
 
     // 1. Save Local

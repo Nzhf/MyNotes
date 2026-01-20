@@ -87,6 +87,40 @@ class MediaService {
     return null;
   }
 
+  // ===========================================================================
+  // VIDEO FILE PICKER
+  // ===========================================================================
+  /// **Step 5: Pick a Video File from the device**
+  /// Opens the system file picker for video files and copies to local storage.
+  Future<String?> pickVideoFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      // Save it to our local folder so we don't lose access later
+      return await _saveFileLocally(result.files.single.path!, 'video');
+    }
+    return null;
+  }
+
+  /// **Step 6: Pick any Media (Image or Video) from Gallery**
+  Future<String?> pickMedia() async {
+    final XFile? media = await _picker.pickMedia();
+    if (media == null) return null;
+
+    // Determine prefix based on file type
+    // Note: pickMedia doesn't give us mimeType directly in a simple way,
+    // but the extension should suffice for our local storage prefix.
+    final ext = p.extension(media.path).toLowerCase();
+    final String prefix = (ext == '.mp4' || ext == '.mov' || ext == '.avi')
+        ? 'video'
+        : 'img';
+
+    return await _saveFileLocally(media.path, prefix);
+  }
+
   /// **Helper: Save file to app's local directory**
   /// This ensures we keep the file even if the user deletes the original
   Future<String> _saveFileLocally(String originalPath, String prefix) async {
